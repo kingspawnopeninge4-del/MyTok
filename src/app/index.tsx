@@ -1,6 +1,8 @@
+import { MaterialCommunityIcons as ExpoMaterialCommunityIcons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   FlatList,
   KeyboardAvoidingView,
@@ -8,12 +10,86 @@ import {
   Pressable,
   Share,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+type IconName =
+  | 'thumb-up'
+  | 'thumb-up-off-alt'
+  | 'thumb-down'
+  | 'thumb-down-off-alt'
+  | 'comment'
+  | 'more-horiz'
+  | 'speed'
+  | 'repeat'
+  | 'high-quality'
+  | 'volume-off'
+  | 'volume-up'
+  | 'bookmark'
+  | 'bookmark-border'
+  | 'flag'
+  | 'arrow-back'
+  | 'check';
+
+const ICON_NAMES: Record<IconName, string> = {
+  'thumb-up': 'thumb-up',
+  'thumb-up-off-alt': 'thumb-up-outline',
+  'thumb-down': 'thumb-down',
+  'thumb-down-off-alt': 'thumb-down-outline',
+  comment: 'comment-outline',
+  'more-horiz': 'dots-horizontal',
+  speed: 'speedometer',
+  repeat: 'repeat',
+  'high-quality': 'high-definition',
+  'volume-off': 'volume-mute',
+  'volume-up': 'volume-high',
+  bookmark: 'bookmark',
+  'bookmark-border': 'bookmark-outline',
+  flag: 'flag-outline',
+  'arrow-back': 'arrow-left',
+  check: 'check',
+};
+
+function MaterialIcons({
+  name,
+  size = 24,
+  color = 'black',
+}: {
+  name: IconName;
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <ExpoMaterialCommunityIcons
+      name={ICON_NAMES[name] as any}
+      size={size}
+      color={color}
+    />
+  );
+}
+
+function MaterialCommunityIcons({
+  name,
+  size = 24,
+  color = 'black',
+}: {
+  name: 'share';
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <ExpoMaterialCommunityIcons
+      name="share-outline"
+      size={size}
+      color={color}
+    />
+  );
+}
 
 type CommentData = {
   id: string;
@@ -30,11 +106,17 @@ type VideoData = {
   color: string;
   likes: number;
   liked: boolean;
+  disliked: boolean;
+  saved: boolean;
   following: boolean;
   comments: CommentData[];
 };
 
 type Tab = 'following' | 'foryou';
+type MenuScreen = 'main' | 'speed' | 'quality';
+
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const QUALITIES = ['Auto', '1080p', '720p', '480p', '360p'];
 
 const INITIAL_VIDEOS: VideoData[] = [
   {
@@ -46,6 +128,8 @@ const INITIAL_VIDEOS: VideoData[] = [
     color: '#e8590c',
     likes: 0,
     liked: false,
+    disliked: false,
+    saved: false,
     following: false,
     comments: [],
   },
@@ -58,6 +142,8 @@ const INITIAL_VIDEOS: VideoData[] = [
     color: '#1971c2',
     likes: 0,
     liked: false,
+    disliked: false,
+    saved: false,
     following: false,
     comments: [],
   },
@@ -73,28 +159,63 @@ function formatCount(n: number): string {
   return String(n);
 }
 
+function speedLabel(s: number): string {
+  return s === 1 ? 'Normal' : s + 'x';
+}
+
+function OptionRow({
+  icon,
+  label,
+  value,
+  right,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  value?: string;
+  right?: React.ReactNode;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={styles.optionRow} onPress={onPress}>
+      <MaterialIcons name={icon} size={24} color="white" />
+      <Text style={styles.optionLabel}>{label}</Text>
+      {value !== undefined && <Text style={styles.optionValue}>{value}</Text>}
+      {right}
+    </Pressable>
+  );
+}
+
 function VideoItem({
   video,
   height,
   isActive,
+  speed,
+  loop,
+  muted,
   onLike,
+  onDislike,
   onDoubleTapLike,
   onFollow,
   onOpenComments,
   onShare,
+  onOpenMenu,
 }: {
   video: VideoData;
   height: number;
   isActive: boolean;
+  speed: number;
+  loop: boolean;
+  muted: boolean;
   onLike: (id: string) => void;
+  onDislike: (id: string) => void;
   onDoubleTapLike: (id: string) => void;
   onFollow: (id: string) => void;
   onOpenComments: (id: string) => void;
   onShare: (id: string) => void;
+  onOpenMenu: (id: string) => void;
 }) {
-  const player = useVideoPlayer(video.url, (p) => {
-    p.loop = true;
-  });
+  const player = useVideoPlayer(video.url);
 
   const [icon, setIcon] = useState<'pause' | 'play'>('pause');
   const [progress, setProgress] = useState(0);
@@ -107,7 +228,18 @@ function VideoItem({
   const lastTap = useRef(0);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Autoplay when on screen, pause and rewind when not
+  useEffect(() => {
+    player.loop = loop;
+  }, [loop, player]);
+
+  useEffect(() => {
+    player.muted = muted;
+  }, [muted, player]);
+
+  useEffect(() => {
+    player.playbackRate = speed;
+  }, [speed, player]);
+
   useEffect(() => {
     if (isActive) {
       player.play();
@@ -117,7 +249,6 @@ function VideoItem({
     }
   }, [isActive, player]);
 
-  // Update the progress bar
   useEffect(() => {
     const id = setInterval(() => {
       if (!isActive) {
@@ -136,7 +267,6 @@ function VideoItem({
     return () => clearInterval(id);
   }, [isActive, player]);
 
-  // Clean up the tap timer
   useEffect(() => {
     return () => {
       if (tapTimer.current) {
@@ -189,7 +319,6 @@ function VideoItem({
     flashIcon();
   };
 
-  // One tap = pause/play, two quick taps = like
   const handleTap = () => {
     const now = Date.now();
     if (now - lastTap.current < 300) {
@@ -237,15 +366,20 @@ function VideoItem({
       </Animated.View>
 
       {/* Big thumbs-up on double tap */}
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.centerWrap,
-          { opacity: likeOpacity, transform: [{ scale: likeScale }] },
-        ]}
-      >
-        <Text style={styles.bigLike}>👍</Text>
-      </Animated.View>
+      {/* YouTube-style thumbs-up animation on double tap */}
+<Animated.View
+  pointerEvents="none"
+  style={[
+    styles.centerWrap,
+    { opacity: likeOpacity, transform: [{ scale: likeScale }] },
+  ]}
+>
+  <MaterialIcons
+    name="thumb-up"
+    size={100}
+    color="#3ea6ff"
+  />
+</Animated.View>
 
       {/* Username, caption, music */}
       <View pointerEvents="none" style={styles.infoWrap}>
@@ -272,17 +406,29 @@ function VideoItem({
           )}
         </Pressable>
 
-        {/* Like (thumbs up) */}
+        {/* Like */}
         <Pressable style={styles.actionBtn} onPress={() => onLike(video.id)}>
-          <View
-            style={[
-              styles.actionCircle,
-              video.liked && styles.actionCircleLiked,
-            ]}
-          >
-            <Text style={styles.actionEmoji}>👍</Text>
-          </View>
-          <Text style={styles.actionCount}>{formatCount(video.likes)}</Text>
+          <MaterialIcons
+            name={video.liked ? 'thumb-up' : 'thumb-up-off-alt'}
+            size={28}
+            color={video.liked ? '#3ea6ff' : 'white'}
+          />
+          <Text style={styles.actionLabel}>
+            {video.likes > 0 ? formatCount(video.likes) : 'Like'}
+          </Text>
+        </Pressable>
+
+        {/* Dislike */}
+        <Pressable
+          style={styles.actionBtn}
+          onPress={() => onDislike(video.id)}
+        >
+          <MaterialIcons
+            name={video.disliked ? 'thumb-down' : 'thumb-down-off-alt'}
+            size={28}
+            color={video.disliked ? '#3ea6ff' : 'white'}
+          />
+          <Text style={styles.actionLabel}>Dislike</Text>
         </Pressable>
 
         {/* Comments */}
@@ -290,20 +436,27 @@ function VideoItem({
           style={styles.actionBtn}
           onPress={() => onOpenComments(video.id)}
         >
-          <View style={styles.actionCircle}>
-            <Text style={styles.actionEmoji}>💬</Text>
-          </View>
-          <Text style={styles.actionCount}>
-            {formatCount(video.comments.length)}
+          <MaterialIcons name="comment" size={26} color="white" />
+          <Text style={styles.actionLabel}>
+            {video.comments.length > 0
+              ? formatCount(video.comments.length)
+              : 'Comments'}
           </Text>
         </Pressable>
 
-        {/* Share (YouTube style) */}
+        {/* Share */}
         <Pressable style={styles.actionBtn} onPress={() => onShare(video.id)}>
-          <View style={styles.actionCircle}>
-            <Text style={styles.shareArrow}>↪</Text>
-          </View>
-          <Text style={styles.actionCount}>Share</Text>
+          <MaterialCommunityIcons name="share" size={30} color="white" />
+          <Text style={styles.actionLabel}>Share</Text>
+        </Pressable>
+
+        {/* More options */}
+        <Pressable
+          style={styles.moreBtn}
+          onPress={() => onOpenMenu(video.id)}
+          hitSlop={8}
+        >
+          <MaterialIcons name="more-horiz" size={28} color="white" />
         </Pressable>
       </View>
 
@@ -326,6 +479,14 @@ export default function HomeScreen() {
   const [listHeight, setListHeight] = useState(height);
   const [commentsId, setCommentsId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+
+  // Settings from the three-dot menu
+  const [menu, setMenu] = useState<MenuScreen | null>(null);
+  const [menuVideoId, setMenuVideoId] = useState<string | null>(null);
+  const [speed, setSpeed] = useState(1);
+  const [loop, setLoop] = useState(true);
+  const [muted, setMuted] = useState(false);
+  const [quality, setQuality] = useState('Auto');
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
@@ -353,15 +514,34 @@ export default function HomeScreen() {
 
   const toggleLike = (id: string) => {
     setVideos((prev) =>
-      prev.map((v) =>
-        v.id === id
-          ? {
-              ...v,
-              liked: !v.liked,
-              likes: v.liked ? v.likes - 1 : v.likes + 1,
-            }
-          : v
-      )
+      prev.map((v) => {
+        if (v.id !== id) {
+          return v;
+        }
+        if (v.liked) {
+          return { ...v, liked: false, likes: v.likes - 1 };
+        }
+        return { ...v, liked: true, likes: v.likes + 1, disliked: false };
+      })
+    );
+  };
+
+  const toggleDislike = (id: string) => {
+    setVideos((prev) =>
+      prev.map((v) => {
+        if (v.id !== id) {
+          return v;
+        }
+        if (v.disliked) {
+          return { ...v, disliked: false };
+        }
+        return {
+          ...v,
+          disliked: true,
+          liked: false,
+          likes: v.liked ? v.likes - 1 : v.likes,
+        };
+      })
     );
   };
 
@@ -369,7 +549,9 @@ export default function HomeScreen() {
   const likeOnly = (id: string) => {
     setVideos((prev) =>
       prev.map((v) =>
-        v.id === id && !v.liked ? { ...v, liked: true, likes: v.likes + 1 } : v
+        v.id === id && !v.liked
+          ? { ...v, liked: true, likes: v.likes + 1, disliked: false }
+          : v
       )
     );
   };
@@ -377,6 +559,12 @@ export default function HomeScreen() {
   const toggleFollow = (id: string) => {
     setVideos((prev) =>
       prev.map((v) => (v.id === id ? { ...v, following: !v.following } : v))
+    );
+  };
+
+  const toggleSave = (id: string) => {
+    setVideos((prev) =>
+      prev.map((v) => (v.id === id ? { ...v, saved: !v.saved } : v))
     );
   };
 
@@ -419,7 +607,25 @@ export default function HomeScreen() {
     setDraft('');
   };
 
+  const openMenu = (id: string) => {
+    setMenuVideoId(id);
+    setMenu('main');
+  };
+
+  const closeMenu = () => {
+    setMenu(null);
+  };
+
+  const reportVideo = () => {
+    setMenu(null);
+    Alert.alert(
+      'Report',
+      'Thanks for letting us know. There is no server yet, so this report is not sent anywhere.'
+    );
+  };
+
   const openVideo = videos.find((v) => v.id === commentsId) ?? null;
+  const menuVideo = videos.find((v) => v.id === menuVideoId) ?? null;
 
   return (
     <View
@@ -446,11 +652,16 @@ export default function HomeScreen() {
               video={item}
               height={listHeight}
               isActive={index === activeIndex}
+              speed={speed}
+              loop={loop}
+              muted={muted}
               onLike={toggleLike}
+              onDislike={toggleDislike}
               onDoubleTapLike={likeOnly}
               onFollow={toggleFollow}
               onOpenComments={setCommentsId}
               onShare={shareVideo}
+              onOpenMenu={openMenu}
             />
           )}
           showsVerticalScrollIndicator={false}
@@ -566,6 +777,130 @@ export default function HomeScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Options menu (the three dots) */}
+      <Modal
+        visible={menu !== null}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={closeMenu}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={closeMenu} />
+          <View
+            style={[
+              styles.menuSheet,
+              { paddingBottom: insets.bottom + 12 },
+            ]}
+          >
+            {menu === 'main' && (
+              <View>
+                <OptionRow
+                  icon="speed"
+                  label="Playback speed"
+                  value={speedLabel(speed)}
+                  onPress={() => setMenu('speed')}
+                />
+                <OptionRow
+                  icon="repeat"
+                  label="Loop"
+                  onPress={() => setLoop((l) => !l)}
+                  right={
+                    <View pointerEvents="none">
+                      <Switch value={loop} />
+                    </View>
+                  }
+                />
+                <OptionRow
+                  icon="high-quality"
+                  label="Quality"
+                  value={quality}
+                  onPress={() => setMenu('quality')}
+                />
+                <OptionRow
+                  icon={muted ? 'volume-off' : 'volume-up'}
+                  label="Mute"
+                  onPress={() => setMuted((m) => !m)}
+                  right={
+                    <View pointerEvents="none">
+                      <Switch value={muted} />
+                    </View>
+                  }
+                />
+                <OptionRow
+                  icon={menuVideo && menuVideo.saved ? 'bookmark' : 'bookmark-border'}
+                  label={menuVideo && menuVideo.saved ? 'Saved' : 'Save'}
+                  onPress={() => {
+                    if (menuVideoId) {
+                      toggleSave(menuVideoId);
+                    }
+                  }}
+                />
+                <OptionRow icon="flag" label="Report" onPress={reportVideo} />
+              </View>
+            )}
+
+            {menu === 'speed' && (
+              <View>
+                <Pressable
+                  style={styles.menuBack}
+                  onPress={() => setMenu('main')}
+                >
+                  <MaterialIcons name="arrow-back" size={24} color="white" />
+                  <Text style={styles.menuTitle}>Playback speed</Text>
+                </Pressable>
+                {SPEEDS.map((s) => (
+                  <Pressable
+                    key={s}
+                    style={styles.optionRow}
+                    onPress={() => {
+                      setSpeed(s);
+                      setMenu('main');
+                    }}
+                  >
+                    <View style={styles.checkSlot}>
+                      {speed === s && (
+                        <MaterialIcons name="check" size={22} color="white" />
+                      )}
+                    </View>
+                    <Text style={styles.optionLabel}>{speedLabel(s)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {menu === 'quality' && (
+              <View>
+                <Pressable
+                  style={styles.menuBack}
+                  onPress={() => setMenu('main')}
+                >
+                  <MaterialIcons name="arrow-back" size={24} color="white" />
+                  <Text style={styles.menuTitle}>Quality</Text>
+                </Pressable>
+                {QUALITIES.map((q) => (
+                  <Pressable
+                    key={q}
+                    style={styles.optionRow}
+                    onPress={() => {
+                      setQuality(q);
+                      setMenu('main');
+                    }}
+                  >
+                    <View style={styles.checkSlot}>
+                      {quality === q && (
+                        <MaterialIcons name="check" size={22} color="white" />
+                      )}
+                    </View>
+                    <Text style={styles.optionLabel}>{q}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -650,18 +985,19 @@ const styles = StyleSheet.create({
   },
   actions: {
     position: 'absolute',
-    right: 10,
-    bottom: 24,
+    right: 8,
+    bottom: 20,
     alignItems: 'center',
+    width: 64,
   },
   avatarWrap: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 24,
   },
   avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     borderWidth: 2,
     borderColor: 'white',
     alignItems: 'center',
@@ -669,57 +1005,41 @@ const styles = StyleSheet.create({
   },
   avatarLetter: {
     color: 'white',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
   },
   plusBadge: {
     position: 'absolute',
-    bottom: -11,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    bottom: -10,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: '#ff2d55',
     alignItems: 'center',
     justifyContent: 'center',
   },
   plusText: {
     color: 'white',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
-    lineHeight: 18,
+    lineHeight: 17,
   },
   actionBtn: {
     alignItems: 'center',
-    marginBottom: 18,
+    marginBottom: 16,
   },
-  actionCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionCircleLiked: {
-    backgroundColor: '#3ea6ff',
-  },
-  actionEmoji: {
-    fontSize: 26,
-  },
-  shareArrow: {
+  actionLabel: {
     color: 'white',
-    fontSize: 32,
-    fontWeight: 'bold',
-    lineHeight: 38,
-  },
-  actionCount: {
-    color: 'white',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    marginTop: 4,
-    textShadowColor: 'rgba(0,0,0,0.6)',
+    marginTop: 3,
+    textShadowColor: 'rgba(0,0,0,0.7)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
+  },
+  moreBtn: {
+    alignItems: 'center',
+    marginTop: -2,
   },
   progressTrack: {
     position: 'absolute',
@@ -879,5 +1199,46 @@ const styles = StyleSheet.create({
   postText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+  menuSheet: {
+    backgroundColor: '#1c1c1e',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingTop: 8,
+  },
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    gap: 16,
+  },
+  optionLabel: {
+    flex: 1,
+    color: 'white',
+    fontSize: 16,
+  },
+  optionValue: {
+    color: '#aaa',
+    fontSize: 14,
+  },
+  menuBack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    gap: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#3a3a3c',
+  },
+  menuTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  checkSlot: {
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
