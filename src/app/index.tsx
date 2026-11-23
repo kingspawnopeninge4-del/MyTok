@@ -1,19 +1,45 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Animated,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
-const VIDEO_URL =
-  'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
+const VIDEOS = [
+  'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+  'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/friday.mp4',
+];
 
-export default function HomeScreen() {
-  const player = useVideoPlayer(VIDEO_URL, (p) => {
+function VideoItem({
+  url,
+  height,
+  isActive,
+}: {
+  url: string;
+  height: number;
+  isActive: boolean;
+}) {
+  const player = useVideoPlayer(url, (p) => {
     p.loop = true;
-    p.play();
   });
 
   const [icon, setIcon] = useState<'pause' | 'play'>('pause');
   const opacity = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.8)).current;
+
+  // Autoplay when this video is on screen, pause and rewind when it is not
+  useEffect(() => {
+    if (isActive) {
+      player.play();
+    } else {
+      player.pause();
+      player.currentTime = 0;
+    }
+  }, [isActive, player]);
 
   const flashIcon = () => {
     opacity.setValue(1);
@@ -44,7 +70,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={{ height, backgroundColor: 'black' }}>
       <VideoView
         player={player}
         style={styles.video}
@@ -68,6 +94,61 @@ export default function HomeScreen() {
           )}
         </View>
       </Animated.View>
+    </View>
+  );
+}
+
+export default function HomeScreen() {
+  const { height } = useWindowDimensions();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [listHeight, setListHeight] = useState(height);
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
+      const first = viewableItems[0];
+      if (first && first.index !== null && first.index !== undefined) {
+        setActiveIndex(first.index);
+      }
+    }
+  ).current;
+
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 60,
+  }).current;
+
+  return (
+    <View
+      style={styles.container}
+      onLayout={(e) => setListHeight(e.nativeEvent.layout.height)}
+    >
+      <FlatList
+        data={VIDEOS}
+        keyExtractor={(_, i) => String(i)}
+        renderItem={({ item, index }) => (
+          <VideoItem
+            url={item}
+            height={listHeight}
+            isActive={index === activeIndex}
+          />
+        )}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={listHeight}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        disableIntervalMomentum
+        bounces={false}
+        overScrollMode="never"
+        getItemLayout={(_, i) => ({
+          length: listHeight,
+          offset: listHeight * i,
+          index: i,
+        })}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        windowSize={3}
+        initialNumToRender={1}
+        maxToRenderPerBatch={1}
+      />
     </View>
   );
 }
