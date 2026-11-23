@@ -1,3 +1,4 @@
+
 import { MaterialCommunityIcons as ExpoMaterialCommunityIcons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useRef, useState } from 'react';
@@ -31,6 +32,7 @@ type IconName =
   | 'high-quality'
   | 'volume-off'
   | 'volume-up'
+  | 'fast-forward'
   | 'bookmark'
   | 'bookmark-border'
   | 'flag'
@@ -50,6 +52,7 @@ const ICON_NAMES: Record<IconName, string> = {
   'high-quality': 'high-definition',
   'volume-off': 'volume-mute',
   'volume-up': 'volume-high',
+  'fast-forward': 'fast-forward',
   bookmark: 'bookmark',
   'bookmark-border': 'bookmark-outline',
   flag: 'flag-outline',
@@ -233,6 +236,7 @@ function VideoItem({
 
   const [icon, setIcon] = useState<'pause' | 'play'>('play');
   const [progress, setProgress] = useState(0);
+  const [fastForward, setFastForward] = useState(false);
 
 
   const opacity = useRef(new Animated.Value(0)).current;
@@ -256,8 +260,10 @@ function VideoItem({
 
 
   useEffect(() => {
-    player.playbackRate = speed;
-  }, [speed, player]);
+    if (!fastForward) {
+      player.playbackRate = speed;
+    }
+  }, [speed, fastForward, player]);
 
 
   useEffect(() => {
@@ -266,6 +272,7 @@ function VideoItem({
     } else {
       player.pause();
       player.currentTime = 0;
+      setFastForward(false);
     }
   }, [isActive, player]);
 
@@ -365,6 +372,28 @@ function VideoItem({
   };
 
 
+  // Hold the video to temporarily play at 2x speed
+  const startFastForward = () => {
+    if (!isActive) return;
+
+    if (tapTimer.current) {
+      clearTimeout(tapTimer.current);
+      tapTimer.current = null;
+    }
+
+    player.playbackRate = 2;
+    setFastForward(true);
+  };
+
+
+  const stopFastForward = () => {
+    if (!fastForward) return;
+
+    player.playbackRate = speed;
+    setFastForward(false);
+  };
+
+
   return (
     <View style={{ height, backgroundColor: 'black' }}>
       <VideoView
@@ -373,7 +402,14 @@ function VideoItem({
         contentFit="cover"
         nativeControls={false}
       />
-      <Pressable style={styles.tapArea} onPress={handleTap} />
+
+      <Pressable
+        style={styles.tapArea}
+        onPress={handleTap}
+        onLongPress={startFastForward}
+        onPressOut={stopFastForward}
+        delayLongPress={250}
+      />
 
 
       {/* Pause / play icon flash */}
@@ -395,7 +431,6 @@ function VideoItem({
 
 
       {/* Big thumbs-up on double tap */}
-      {/* YouTube-style thumbs-up animation on double tap */}
       <Animated.View
         pointerEvents="none"
         style={[
@@ -409,6 +444,17 @@ function VideoItem({
           color="#3ea6ff"
         />
       </Animated.View>
+
+
+      {/* Small YouTube-style 2x indicator at the top */}
+      {fastForward && (
+        <View pointerEvents="none" style={styles.fastForwardWrap}>
+          <View style={styles.fastForwardBadge}>
+            <MaterialIcons name="fast-forward" size={16} color="white" />
+            <Text style={styles.fastForwardText}>2x</Text>
+          </View>
+        </View>
+      )}
 
 
       {/* Username, caption, music */}
@@ -1050,7 +1096,7 @@ const styles = StyleSheet.create({
   },
   actions: {
     position: 'absolute',
-    right: 8,
+    right: 0,
     bottom: 20,
     alignItems: 'center',
     width: 64,
@@ -1305,5 +1351,29 @@ const styles = StyleSheet.create({
     width: 24,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // Small top 2x indicator
+  fastForwardWrap: {
+    position: 'absolute',
+    top: 65,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fastForwardBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  fastForwardText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });
