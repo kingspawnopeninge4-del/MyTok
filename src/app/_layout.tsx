@@ -1,18 +1,49 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Tabs } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { AuthProvider } from '@/lib/auth';
 
-SplashScreen.preventAutoHideAsync();
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function RootLayout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <AuthProvider>
+      <StatusBar style="light" />
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: { backgroundColor: 'black', borderTopColor: '#222' },
+          tabBarActiveTintColor: 'white',
+          tabBarInactiveTintColor: '#888',
+        }}
+      >
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: 'Home',
+            tabBarIcon: ({ focused, size }) => (
+              <MaterialCommunityIcons
+                name="home"
+                size={size}
+                color={focused ? 'white' : '#888'}
+              />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{
+            title: 'Profile',
+            tabBarIcon: ({ focused, size }) => (
+              <MaterialCommunityIcons
+                name="account"
+                size={size}
+                color={focused ? 'white' : '#888'}
+              />
+            ),
+          }}
+        />
+        <Tabs.Screen name="explore" options={{ href: null }} />
+      </Tabs>
+    </AuthProvider>
   );
 }
