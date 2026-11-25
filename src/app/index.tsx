@@ -1,13 +1,15 @@
-
-import { MaterialCommunityIcons as ExpoMaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useNavigation } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
   FlatList,
+  GestureResponderEvent,
   KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   Share,
   StyleSheet,
@@ -19,6 +21,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+/* ----------------------------- Icons ----------------------------- */
 
 type IconName =
   | 'thumb-up'
@@ -37,8 +40,8 @@ type IconName =
   | 'bookmark-border'
   | 'flag'
   | 'arrow-back'
-  | 'check';
-
+  | 'check'
+  | 'share';
 
 const ICON_NAMES: Record<IconName, string> = {
   'thumb-up': 'thumb-up',
@@ -58,10 +61,10 @@ const ICON_NAMES: Record<IconName, string> = {
   flag: 'flag-outline',
   'arrow-back': 'arrow-left',
   check: 'check',
+  share: 'share-outline',
 };
 
-
-function MaterialIcons({
+function Icon({
   name,
   size = 24,
   color = 'black',
@@ -71,7 +74,7 @@ function MaterialIcons({
   color?: string;
 }) {
   return (
-    <ExpoMaterialCommunityIcons
+    <MaterialCommunityIcons
       name={ICON_NAMES[name] as any}
       size={size}
       color={color}
@@ -79,32 +82,13 @@ function MaterialIcons({
   );
 }
 
-
-function MaterialCommunityIcons({
-  name,
-  size = 24,
-  color = 'black',
-}: {
-  name: 'share';
-  size?: number;
-  color?: string;
-}) {
-  return (
-    <ExpoMaterialCommunityIcons
-      name="share-outline"
-      size={size}
-      color={color}
-    />
-  );
-}
-
+/* ------------------------------ Types ---------------------------- */
 
 type CommentData = {
   id: string;
   user: string;
   text: string;
 };
-
 
 type VideoData = {
   id: string;
@@ -121,14 +105,15 @@ type VideoData = {
   comments: CommentData[];
 };
 
-
 type Tab = 'following' | 'foryou';
 type MenuScreen = 'main' | 'speed' | 'quality';
 
+/* ----------------------------- Constants ------------------------- */
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+// Quality is a joke option for now, it does not change the video
 const QUALITIES = ['Auto', '1080p', '720p', '480p', '360p'];
-
+const LIKE_SIZE = 100;
 
 const INITIAL_VIDEOS: VideoData[] = [
   {
@@ -161,6 +146,7 @@ const INITIAL_VIDEOS: VideoData[] = [
   },
 ];
 
+/* ----------------------------- Helpers --------------------------- */
 
 function formatCount(n: number): string {
   if (n >= 1000000) {
@@ -172,11 +158,11 @@ function formatCount(n: number): string {
   return String(n);
 }
 
-
 function speedLabel(s: number): string {
   return s === 1 ? 'Normal' : s + 'x';
 }
 
+/* ---------------------------- OptionRow -------------------------- */
 
 function OptionRow({
   icon,
@@ -193,7 +179,7 @@ function OptionRow({
 }) {
   return (
     <Pressable style={styles.optionRow} onPress={onPress}>
-      <MaterialIcons name={icon} size={24} color="white" />
+      <Icon name={icon} size={24} color="white" />
       <Text style={styles.optionLabel}>{label}</Text>
       {value !== undefined && <Text style={styles.optionValue}>{value}</Text>}
       {right}
@@ -201,22 +187,9 @@ function OptionRow({
   );
 }
 
+/* ---------------------------- VideoItem -------------------------- */
 
-function VideoItem({
-  video,
-  height,
-  isActive,
-  speed,
-  loop,
-  muted,
-  onLike,
-  onDislike,
-  onDoubleTapLike,
-  onFollow,
-  onOpenComments,
-  onShare,
-  onOpenMenu,
-}: {
+type VideoItemProps = {
   video: VideoData;
   height: number;
   isActive: boolean;
@@ -230,34 +203,54 @@ function VideoItem({
   onOpenComments: (id: string) => void;
   onShare: (id: string) => void;
   onOpenMenu: (id: string) => void;
-}) {
-  const player = useVideoPlayer(video.url);
+};
 
+const VideoItem = memo(function VideoItem({
+  video,
+  height,
+  isActive,
+  speed,
+  loop,
+  muted,
+  onLike,
+  onDislike,
+  onDoubleTapLike,
+  onFollow,
+  onOpenComments,
+  onShare,
+  onOpenMenu,
+}: VideoItemProps) {
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+
+  const player = useVideoPlayer(video.url, (p) => {
+    p.loop = loop;
+    p.muted = muted;
+  });
 
   const [icon, setIcon] = useState<'pause' | 'play'>('play');
-  const [progress, setProgress] = useState(0);
   const [fastForward, setFastForward] = useState(false);
-
 
   const opacity = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.8)).current;
   const likeOpacity = useRef(new Animated.Value(0)).current;
   const likeScale = useRef(new Animated.Value(0.3)).current;
-
+  const likeX = useRef(new Animated.Value(0)).current;
+  const likeY = useRef(new Animated.Value(0)).current;
+  const progress = useRef(new Animated.Value(0)).current;
 
   const lastTap = useRef(0);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  const fastForwardRef = useRef(false);
+  const longPressed = useRef(false);
 
   useEffect(() => {
     player.loop = loop;
   }, [loop, player]);
 
-
   useEffect(() => {
     player.muted = muted;
   }, [muted, player]);
-
 
   useEffect(() => {
     if (!fastForward) {
@@ -265,36 +258,35 @@ function VideoItem({
     }
   }, [speed, fastForward, player]);
 
-
   useEffect(() => {
     if (isActive) {
       player.play();
     } else {
       player.pause();
       player.currentTime = 0;
+      fastForwardRef.current = false;
       setFastForward(false);
+      progress.setValue(0);
     }
-  }, [isActive, player]);
+  }, [isActive, player, progress]);
 
-
+  // Progress only runs for the video you are watching
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     const id = setInterval(() => {
-      if (!isActive) {
-        setProgress(0);
-        return;
-      }
       try {
         const d = player.duration;
         if (d > 0) {
-          setProgress(Math.min(1, player.currentTime / d));
+          progress.setValue(Math.min(1, player.currentTime / d));
         }
       } catch {
         // player not ready yet
       }
-    }, 200);
+    }, 100);
     return () => clearInterval(id);
-  }, [isActive, player]);
-
+  }, [isActive, player, progress]);
 
   useEffect(() => {
     return () => {
@@ -303,7 +295,6 @@ function VideoItem({
       }
     };
   }, []);
-
 
   const flashIcon = () => {
     opacity.setValue(1);
@@ -322,8 +313,10 @@ function VideoItem({
     ]).start();
   };
 
-
-  const popLike = () => {
+  const popLike = (x: number, y: number) => {
+    const half = LIKE_SIZE / 2;
+    likeX.setValue(Math.max(half, Math.min(x, width - half)));
+    likeY.setValue(Math.max(half, Math.min(y, height - half)));
     likeOpacity.setValue(1);
     likeScale.setValue(0.3);
     Animated.sequence([
@@ -339,7 +332,6 @@ function VideoItem({
     ]).start();
   };
 
-
   const togglePlay = () => {
     if (player.playing) {
       player.pause();
@@ -351,8 +343,13 @@ function VideoItem({
     flashIcon();
   };
 
-
-  const handleTap = () => {
+  const handleTap = (e: GestureResponderEvent) => {
+    // A long press (2x hold) must never count as a tap
+    if (longPressed.current) {
+      longPressed.current = false;
+      return;
+    }
+    const { locationX, locationY } = e.nativeEvent;
     const now = Date.now();
     if (now - lastTap.current < 300) {
       if (tapTimer.current) {
@@ -361,7 +358,7 @@ function VideoItem({
       }
       lastTap.current = 0;
       onDoubleTapLike(video.id);
-      popLike();
+      popLike(locationX, locationY);
     } else {
       lastTap.current = now;
       tapTimer.current = setTimeout(() => {
@@ -371,28 +368,30 @@ function VideoItem({
     }
   };
 
-
   // Hold the video to temporarily play at 2x speed
   const startFastForward = () => {
     if (!isActive) return;
+
+    longPressed.current = true;
 
     if (tapTimer.current) {
       clearTimeout(tapTimer.current);
       tapTimer.current = null;
     }
+    lastTap.current = 0;
 
     player.playbackRate = 2;
+    fastForwardRef.current = true;
     setFastForward(true);
   };
 
-
   const stopFastForward = () => {
-    if (!fastForward) return;
+    if (!fastForwardRef.current) return;
 
     player.playbackRate = speed;
+    fastForwardRef.current = false;
     setFastForward(false);
   };
-
 
   return (
     <View style={{ height, backgroundColor: 'black' }}>
@@ -405,12 +404,14 @@ function VideoItem({
 
       <Pressable
         style={styles.tapArea}
+        onPressIn={() => {
+          longPressed.current = false;
+        }}
         onPress={handleTap}
         onLongPress={startFastForward}
         onPressOut={stopFastForward}
         delayLongPress={250}
       />
-
 
       {/* Pause / play icon flash */}
       <Animated.View
@@ -429,33 +430,36 @@ function VideoItem({
         </View>
       </Animated.View>
 
-
-      {/* Big thumbs-up on double tap */}
+      {/* Big thumbs-up on double tap, shown where you tapped */}
       <Animated.View
         pointerEvents="none"
         style={[
-          styles.centerWrap,
-          { opacity: likeOpacity, transform: [{ scale: likeScale }] },
+          styles.bigLikeWrap,
+          {
+            opacity: likeOpacity,
+            transform: [
+              { translateX: Animated.subtract(likeX, LIKE_SIZE / 2) },
+              { translateY: Animated.subtract(likeY, LIKE_SIZE / 2) },
+              { scale: likeScale },
+            ],
+          },
         ]}
       >
-        <MaterialIcons
-          name="thumb-up"
-          size={100}
-          color="#3ea6ff"
-        />
+        <Icon name="thumb-up" size={LIKE_SIZE} color="#3ea6ff" />
       </Animated.View>
-
 
       {/* Small YouTube-style 2x indicator at the top */}
       {fastForward && (
-        <View pointerEvents="none" style={styles.fastForwardWrap}>
+        <View
+          pointerEvents="none"
+          style={[styles.fastForwardWrap, { top: insets.top + 48 }]}
+        >
           <View style={styles.fastForwardBadge}>
-            <MaterialIcons name="fast-forward" size={16} color="white" />
+            <Icon name="fast-forward" size={16} color="white" />
             <Text style={styles.fastForwardText}>2x</Text>
           </View>
         </View>
       )}
-
 
       {/* Username, caption, music */}
       <View pointerEvents="none" style={styles.infoWrap}>
@@ -463,7 +467,6 @@ function VideoItem({
         <Text style={styles.caption}>{video.caption}</Text>
         <Text style={styles.music}>♫ {video.music}</Text>
       </View>
-
 
       {/* Right side buttons */}
       <View pointerEvents="box-none" style={styles.actions}>
@@ -483,10 +486,9 @@ function VideoItem({
           )}
         </Pressable>
 
-
         {/* Like */}
         <Pressable style={styles.actionBtn} onPress={() => onLike(video.id)}>
-          <MaterialIcons
+          <Icon
             name={video.liked ? 'thumb-up' : 'thumb-up-off-alt'}
             size={28}
             color={video.liked ? '#3ea6ff' : 'white'}
@@ -496,13 +498,12 @@ function VideoItem({
           </Text>
         </Pressable>
 
-
         {/* Dislike */}
         <Pressable
           style={styles.actionBtn}
           onPress={() => onDislike(video.id)}
         >
-          <MaterialIcons
+          <Icon
             name={video.disliked ? 'thumb-down' : 'thumb-down-off-alt'}
             size={28}
             color={video.disliked ? '#3ea6ff' : 'white'}
@@ -510,13 +511,12 @@ function VideoItem({
           <Text style={styles.actionLabel}>Dislike</Text>
         </Pressable>
 
-
         {/* Comments */}
         <Pressable
           style={styles.actionBtn}
           onPress={() => onOpenComments(video.id)}
         >
-          <MaterialIcons name="comment" size={26} color="white" />
+          <Icon name="comment" size={26} color="white" />
           <Text style={styles.actionLabel}>
             {video.comments.length > 0
               ? formatCount(video.comments.length)
@@ -524,13 +524,11 @@ function VideoItem({
           </Text>
         </Pressable>
 
-
         {/* Share */}
         <Pressable style={styles.actionBtn} onPress={() => onShare(video.id)}>
-          <MaterialCommunityIcons name="share" size={30} color="white" />
+          <Icon name="share" size={30} color="white" />
           <Text style={styles.actionLabel}>Share</Text>
         </Pressable>
-
 
         {/* More options */}
         <Pressable
@@ -538,25 +536,44 @@ function VideoItem({
           onPress={() => onOpenMenu(video.id)}
           hitSlop={8}
         >
-          <MaterialIcons name="more-horiz" size={28} color="white" />
+          <Icon name="more-horiz" size={28} color="white" />
         </Pressable>
       </View>
 
-
       {/* Progress bar */}
       <View pointerEvents="none" style={styles.progressTrack}>
-        <View style={{ flex: progress, backgroundColor: 'white' }} />
-        <View style={{ flex: 1 - progress }} />
+        <Animated.View
+          style={[
+            styles.progressFill,
+            {
+              width: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['0%', '100%'],
+              }),
+            },
+          ]}
+        />
       </View>
     </View>
   );
-}
+});
 
+/* ---------------------------- HomeScreen ------------------------- */
 
 export default function HomeScreen() {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const [focused, setFocused] = useState(true);
 
+  useEffect(() => {
+    const unsubFocus = navigation.addListener('focus', () => setFocused(true));
+    const unsubBlur = navigation.addListener('blur', () => setFocused(false));
+    return () => {
+      unsubFocus();
+      unsubBlur();
+    };
+  }, [navigation]);
 
   const [videos, setVideos] = useState<VideoData[]>(INITIAL_VIDEOS);
   const [tab, setTab] = useState<Tab>('foryou');
@@ -564,7 +581,6 @@ export default function HomeScreen() {
   const [listHeight, setListHeight] = useState(height);
   const [commentsId, setCommentsId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-
 
   // Settings from the three-dot menu
   const [menu, setMenu] = useState<MenuScreen | null>(null);
@@ -574,6 +590,9 @@ export default function HomeScreen() {
   const [muted, setMuted] = useState(false);
   const [quality, setQuality] = useState('Auto');
 
+  // Lets stable callbacks read the latest videos without changing identity
+  const videosRef = useRef(videos);
+  videosRef.current = videos;
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
@@ -584,15 +603,12 @@ export default function HomeScreen() {
     }
   ).current;
 
-
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 60,
   }).current;
 
-
   const feed =
     tab === 'following' ? videos.filter((v) => v.following) : videos;
-
 
   const switchTab = (next: Tab) => {
     if (next === tab) {
@@ -602,8 +618,7 @@ export default function HomeScreen() {
     setActiveIndex(0);
   };
 
-
-  const toggleLike = (id: string) => {
+  const toggleLike = useCallback((id: string) => {
     setVideos((prev) =>
       prev.map((v) => {
         if (v.id !== id) {
@@ -615,10 +630,9 @@ export default function HomeScreen() {
         return { ...v, liked: true, likes: v.likes + 1, disliked: false };
       })
     );
-  };
+  }, []);
 
-
-  const toggleDislike = (id: string) => {
+  const toggleDislike = useCallback((id: string) => {
     setVideos((prev) =>
       prev.map((v) => {
         if (v.id !== id) {
@@ -635,11 +649,10 @@ export default function HomeScreen() {
         };
       })
     );
-  };
-
+  }, []);
 
   // Double tap only likes, it never removes a like
-  const likeOnly = (id: string) => {
+  const likeOnly = useCallback((id: string) => {
     setVideos((prev) =>
       prev.map((v) =>
         v.id === id && !v.liked
@@ -647,22 +660,19 @@ export default function HomeScreen() {
           : v
       )
     );
-  };
+  }, []);
 
-
-  const toggleFollow = (id: string) => {
+  const toggleFollow = useCallback((id: string) => {
     setVideos((prev) =>
       prev.map((v) => (v.id === id ? { ...v, following: !v.following } : v))
     );
-  };
-
+  }, []);
 
   const toggleSave = (id: string) => {
     setVideos((prev) =>
       prev.map((v) => (v.id === id ? { ...v, saved: !v.saved } : v))
     );
   };
-
 
   const addComment = () => {
     const text = draft.trim();
@@ -684,9 +694,8 @@ export default function HomeScreen() {
     setDraft('');
   };
 
-
-  const shareVideo = async (id: string) => {
-    const v = videos.find((x) => x.id === id);
+  const shareVideo = useCallback(async (id: string) => {
+    const v = videosRef.current.find((x) => x.id === id);
     if (!v) {
       return;
     }
@@ -697,25 +706,25 @@ export default function HomeScreen() {
     } catch {
       // sharing was cancelled or failed
     }
-  };
+  }, []);
 
+  const openComments = useCallback((id: string) => {
+    setCommentsId(id);
+  }, []);
 
   const closeComments = () => {
     setCommentsId(null);
     setDraft('');
   };
 
-
-  const openMenu = (id: string) => {
+  const openMenu = useCallback((id: string) => {
     setMenuVideoId(id);
     setMenu('main');
-  };
-
+  }, []);
 
   const closeMenu = () => {
     setMenu(null);
   };
-
 
   const reportVideo = () => {
     setMenu(null);
@@ -725,10 +734,52 @@ export default function HomeScreen() {
     );
   };
 
-
   const openVideo = videos.find((v) => v.id === commentsId) ?? null;
   const menuVideo = videos.find((v) => v.id === menuVideoId) ?? null;
 
+  const renderItem = useCallback(
+    ({ item, index }: { item: VideoData; index: number }) => (
+      <VideoItem
+        video={item}
+        height={listHeight}
+        isActive={focused && index === activeIndex}
+        speed={speed}
+        loop={loop}
+        muted={muted}
+        onLike={toggleLike}
+        onDislike={toggleDislike}
+        onDoubleTapLike={likeOnly}
+        onFollow={toggleFollow}
+        onOpenComments={openComments}
+        onShare={shareVideo}
+        onOpenMenu={openMenu}
+      />
+    ),
+    [
+      listHeight,
+      focused,
+      activeIndex,
+      speed,
+      loop,
+      muted,
+      toggleLike,
+      toggleDislike,
+      likeOnly,
+      toggleFollow,
+      openComments,
+      shareVideo,
+      openMenu,
+    ]
+  );
+
+  const getItemLayout = useCallback(
+    (_: unknown, i: number) => ({
+      length: listHeight,
+      offset: listHeight * i,
+      index: i,
+    }),
+    [listHeight]
+  );
 
   return (
     <View
@@ -750,23 +801,8 @@ export default function HomeScreen() {
           key={tab}
           data={feed}
           keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => (
-            <VideoItem
-              video={item}
-              height={listHeight}
-              isActive={index === activeIndex}
-              speed={speed}
-              loop={loop}
-              muted={muted}
-              onLike={toggleLike}
-              onDislike={toggleDislike}
-              onDoubleTapLike={likeOnly}
-              onFollow={toggleFollow}
-              onOpenComments={setCommentsId}
-              onShare={shareVideo}
-              onOpenMenu={openMenu}
-            />
-          )}
+          renderItem={renderItem}
+          extraData={activeIndex}
           showsVerticalScrollIndicator={false}
           snapToInterval={listHeight}
           snapToAlignment="start"
@@ -774,19 +810,15 @@ export default function HomeScreen() {
           disableIntervalMomentum
           bounces={false}
           overScrollMode="never"
-          getItemLayout={(_, i) => ({
-            length: listHeight,
-            offset: listHeight * i,
-            index: i,
-          })}
+          getItemLayout={getItemLayout}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
+          removeClippedSubviews={false}
           windowSize={3}
-          initialNumToRender={1}
-          maxToRenderPerBatch={1}
+          initialNumToRender={2}
+          maxToRenderPerBatch={2}
         />
       )}
-
 
       {/* Top tabs */}
       <View
@@ -814,7 +846,6 @@ export default function HomeScreen() {
         </Pressable>
       </View>
 
-
       {/* Comments sheet */}
       <Modal
         visible={commentsId !== null}
@@ -823,7 +854,10 @@ export default function HomeScreen() {
         statusBarTranslucent
         onRequestClose={closeComments}
       >
-        <KeyboardAvoidingView style={styles.modalRoot} behavior="padding">
+        <KeyboardAvoidingView
+          style={styles.modalRoot}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <Pressable style={styles.backdrop} onPress={closeComments} />
           <View style={[styles.sheet, { height: height * 0.6 }]}>
             <View style={styles.sheetHeader}>
@@ -839,7 +873,6 @@ export default function HomeScreen() {
                 <Text style={styles.sheetClose}>✕</Text>
               </Pressable>
             </View>
-
 
             <FlatList
               style={styles.commentList}
@@ -866,7 +899,6 @@ export default function HomeScreen() {
               )}
             />
 
-
             <View style={styles.inputRow}>
               <TextInput
                 style={styles.input}
@@ -884,7 +916,6 @@ export default function HomeScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-
 
       {/* Options menu (the three dots) */}
       <Modal
@@ -937,7 +968,9 @@ export default function HomeScreen() {
                   }
                 />
                 <OptionRow
-                  icon={menuVideo && menuVideo.saved ? 'bookmark' : 'bookmark-border'}
+                  icon={
+                    menuVideo && menuVideo.saved ? 'bookmark' : 'bookmark-border'
+                  }
                   label={menuVideo && menuVideo.saved ? 'Saved' : 'Save'}
                   onPress={() => {
                     if (menuVideoId) {
@@ -949,14 +982,13 @@ export default function HomeScreen() {
               </View>
             )}
 
-
             {menu === 'speed' && (
               <View>
                 <Pressable
                   style={styles.menuBack}
                   onPress={() => setMenu('main')}
                 >
-                  <MaterialIcons name="arrow-back" size={24} color="white" />
+                  <Icon name="arrow-back" size={24} color="white" />
                   <Text style={styles.menuTitle}>Playback speed</Text>
                 </Pressable>
                 {SPEEDS.map((s) => (
@@ -970,7 +1002,7 @@ export default function HomeScreen() {
                   >
                     <View style={styles.checkSlot}>
                       {speed === s && (
-                        <MaterialIcons name="check" size={22} color="white" />
+                        <Icon name="check" size={22} color="white" />
                       )}
                     </View>
                     <Text style={styles.optionLabel}>{speedLabel(s)}</Text>
@@ -979,14 +1011,13 @@ export default function HomeScreen() {
               </View>
             )}
 
-
             {menu === 'quality' && (
               <View>
                 <Pressable
                   style={styles.menuBack}
                   onPress={() => setMenu('main')}
                 >
-                  <MaterialIcons name="arrow-back" size={24} color="white" />
+                  <Icon name="arrow-back" size={24} color="white" />
                   <Text style={styles.menuTitle}>Quality</Text>
                 </Pressable>
                 {QUALITIES.map((q) => (
@@ -1000,7 +1031,7 @@ export default function HomeScreen() {
                   >
                     <View style={styles.checkSlot}>
                       {quality === q && (
-                        <MaterialIcons name="check" size={22} color="white" />
+                        <Icon name="check" size={22} color="white" />
                       )}
                     </View>
                     <Text style={styles.optionLabel}>{q}</Text>
@@ -1015,6 +1046,7 @@ export default function HomeScreen() {
   );
 }
 
+/* ------------------------------ Styles --------------------------- */
 
 const styles = StyleSheet.create({
   container: {
@@ -1025,10 +1057,19 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   tapArea: {
-    ...StyleSheet.absoluteFill,
-  },
+  ...StyleSheet.absoluteFill,
+},
   centerWrap: {
-    ...StyleSheet.absoluteFill,
+  ...StyleSheet.absoluteFill,
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+  bigLikeWrap: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: LIKE_SIZE,
+    height: LIKE_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1060,9 +1101,6 @@ const styles = StyleSheet.create({
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
     borderLeftColor: 'white',
-  },
-  bigLike: {
-    fontSize: 100,
   },
   infoWrap: {
     position: 'absolute',
@@ -1158,8 +1196,11 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: 3,
-    flexDirection: 'row',
     backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  progressFill: {
+    height: 3,
+    backgroundColor: 'white',
   },
   header: {
     position: 'absolute',
@@ -1356,7 +1397,6 @@ const styles = StyleSheet.create({
   // Small top 2x indicator
   fastForwardWrap: {
     position: 'absolute',
-    top: 65,
     left: 0,
     right: 0,
     alignItems: 'center',

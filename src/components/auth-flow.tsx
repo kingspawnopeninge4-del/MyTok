@@ -2,14 +2,14 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    Image,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 
 import { useAuth } from '@/lib/auth';
@@ -104,8 +104,12 @@ export default function AuthFlow() {
         password,
         options: { data: { username: u } },
       });
-      if (err) {
-        setError(err.message);
+            if (err) {
+        setError(
+          err.message.toLowerCase().includes('database error')
+            ? 'That username is already taken.'
+            : err.message
+        );
         return;
       }
       if (data.user && data.user.identities && data.user.identities.length === 0) {
