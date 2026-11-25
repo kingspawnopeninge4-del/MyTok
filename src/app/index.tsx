@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
+import { remixLabel, setRemix, type Remix } from '@/lib/remix';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -41,7 +42,11 @@ type IconName =
   | 'flag'
   | 'arrow-back'
   | 'check'
-  | 'share';
+  | 'share'
+  | 'repost'
+  | 'remix'
+  | 'green-screen'
+  | 'sound';;
 
 const ICON_NAMES: Record<IconName, string> = {
   'thumb-up': 'thumb-up',
@@ -62,6 +67,10 @@ const ICON_NAMES: Record<IconName, string> = {
   'arrow-back': 'arrow-left',
   check: 'check',
   share: 'share-outline',
+  repost: 'repeat-variant',
+  remix: 'layers-outline',
+  'green-screen': 'image-area',
+  sound: 'music-note',
 };
 
 function Icon({
@@ -103,10 +112,13 @@ type VideoData = {
   saved: boolean;
   following: boolean;
   comments: CommentData[];
+  reposted: boolean;
+  reposts: number;
+  credit?: Remix;
 };
 
 type Tab = 'following' | 'foryou';
-type MenuScreen = 'main' | 'speed' | 'quality';
+type MenuScreen = 'main' | 'speed' | 'quality' | 'remix';
 
 /* ----------------------------- Constants ------------------------- */
 
@@ -129,6 +141,8 @@ const INITIAL_VIDEOS: VideoData[] = [
     saved: false,
     following: false,
     comments: [],
+    reposted: false,
+    reposts: 0,
   },
   {
     id: 'v2',
@@ -143,6 +157,42 @@ const INITIAL_VIDEOS: VideoData[] = [
     saved: false,
     following: false,
     comments: [],
+    reposted: false,
+    reposts: 0,
+  },
+  {
+    id: 'v3',
+    url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+    username: 'sample_user_3',
+    caption: 'Sample remix (green screen)',
+    music: 'original sound - sample_user_3',
+    color: '#2f9e44',
+    likes: 0,
+    liked: false,
+    disliked: false,
+    saved: false,
+    following: false,
+    comments: [],
+    reposted: false,
+    reposts: 0,
+    credit: { kind: 'green', from: 'sample_user_1' },
+  },
+  {
+    id: 'v4',
+    url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/friday.mp4',
+    username: 'sample_user_4',
+    caption: 'Sample remix (sound)',
+    music: 'original sound - sample_user_4',
+    color: '#9c36b5',
+    likes: 0,
+    liked: false,
+    disliked: false,
+    saved: false,
+    following: false,
+    comments: [],
+    reposted: false,
+    reposts: 0,
+    credit: { kind: 'sound', from: 'sample_user_2' },
   },
 ];
 
@@ -203,6 +253,7 @@ type VideoItemProps = {
   onOpenComments: (id: string) => void;
   onShare: (id: string) => void;
   onOpenMenu: (id: string) => void;
+  onRepost: (id: string) => void;
 };
 
 const VideoItem = memo(function VideoItem({
@@ -219,6 +270,7 @@ const VideoItem = memo(function VideoItem({
   onOpenComments,
   onShare,
   onOpenMenu,
+  onRepost,
 }: VideoItemProps) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -465,7 +517,9 @@ const VideoItem = memo(function VideoItem({
       <View pointerEvents="none" style={styles.infoWrap}>
         <Text style={styles.username}>@{video.username}</Text>
         <Text style={styles.caption}>{video.caption}</Text>
-        <Text style={styles.music}>♫ {video.music}</Text>
+                <Text style={styles.music} numberOfLines={1}>
+          {video.credit ? remixLabel(video.credit) : '♫ ' + video.music}
+        </Text>
       </View>
 
       {/* Right side buttons */}
@@ -524,6 +578,18 @@ const VideoItem = memo(function VideoItem({
           </Text>
         </Pressable>
 
+                {/* Repost */}
+        <Pressable style={styles.actionBtn} onPress={() => onRepost(video.id)}>
+          <Icon
+            name="repost"
+            size={35}
+            color={video.reposted ? '#30d158' : 'white'}
+          />
+          <Text style={styles.actionLabel}>
+            {video.reposts > 0 ? formatCount(video.reposts) : 'Repost'}
+          </Text>
+        </Pressable>
+
         {/* Share */}
         <Pressable style={styles.actionBtn} onPress={() => onShare(video.id)}>
           <Icon name="share" size={30} color="white" />
@@ -564,6 +630,7 @@ export default function HomeScreen() {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+    const router = useRouter();
   const [focused, setFocused] = useState(true);
 
   useEffect(() => {
@@ -668,6 +735,19 @@ export default function HomeScreen() {
     );
   }, []);
 
+    const toggleRepost = useCallback((id: string) => {
+    setVideos((prev) =>
+      prev.map((v) =>
+        v.id === id
+          ? {
+              ...v,
+              reposted: !v.reposted,
+              reposts: v.reposted ? v.reposts - 1 : v.reposts + 1,
+            }
+          : v
+      )
+    );
+  }, []);
   const toggleSave = (id: string) => {
     setVideos((prev) =>
       prev.map((v) => (v.id === id ? { ...v, saved: !v.saved } : v))
@@ -736,6 +816,15 @@ export default function HomeScreen() {
 
   const openVideo = videos.find((v) => v.id === commentsId) ?? null;
   const menuVideo = videos.find((v) => v.id === menuVideoId) ?? null;
+  
+  const startRemix = (kind: 'green' | 'sound') => {
+    if (!menuVideo) {
+      return;
+    }
+    setRemix({ kind, from: menuVideo.username });
+    setMenu(null);
+    router.navigate('/upload');
+  };
 
   const renderItem = useCallback(
     ({ item, index }: { item: VideoData; index: number }) => (
@@ -752,7 +841,8 @@ export default function HomeScreen() {
         onFollow={toggleFollow}
         onOpenComments={openComments}
         onShare={shareVideo}
-        onOpenMenu={openMenu}
+                onOpenMenu={openMenu}
+        onRepost={toggleRepost}
       />
     ),
     [
@@ -769,6 +859,7 @@ export default function HomeScreen() {
       openComments,
       shareVideo,
       openMenu,
+            toggleRepost,
     ]
   );
 
@@ -978,6 +1069,11 @@ export default function HomeScreen() {
                     }
                   }}
                 />
+                                <OptionRow
+                  icon="remix"
+                  label="Remix"
+                  onPress={() => setMenu('remix')}
+                />
                 <OptionRow icon="flag" label="Report" onPress={reportVideo} />
               </View>
             )}
@@ -1011,6 +1107,27 @@ export default function HomeScreen() {
               </View>
             )}
 
+            {menu === 'remix' && (
+              <View>
+                <Pressable
+                  style={styles.menuBack}
+                  onPress={() => setMenu('main')}
+                >
+                  <Icon name="arrow-back" size={24} color="white" />
+                  <Text style={styles.menuTitle}>Remix</Text>
+                </Pressable>
+                <OptionRow
+                  icon="green-screen"
+                  label="Green screen"
+                  onPress={() => startRemix('green')}
+                />
+                <OptionRow
+                  icon="sound"
+                  label="Use this sound"
+                  onPress={() => startRemix('sound')}
+                />
+              </View>
+            )}
             {menu === 'quality' && (
               <View>
                 <Pressable

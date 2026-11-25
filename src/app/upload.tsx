@@ -9,6 +9,7 @@ import PostFlow from '@/components/post-flow';
 import SoundPicker, { type SoundChoice } from '@/components/sound-picker';
 import StatusFlow from '@/components/status-flow';
 import { useAuth } from '@/lib/auth';
+import { remixLabel, setRemix, useRemix } from '@/lib/remix';
 
 type Mode = 'post' | 'mytok' | 'status';
 
@@ -29,6 +30,7 @@ export default function UploadScreen() {
   const [idle, setIdle] = useState(true);
   const [sound, setSound] = useState<SoundChoice | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+    const remix = useRemix();
   const touch = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -171,7 +173,24 @@ export default function UploadScreen() {
           </View>
         </View>
       )}
-
+      {mode === 'mytok' && idle && remix && (
+        <View
+          pointerEvents="box-none"
+          style={[styles.remixWrap, { top: insets.top + 66 }]}
+        >
+          <Pressable style={styles.soundPill} onPress={() => setRemix(null)}>
+            <MaterialCommunityIcons
+              name="layers-outline"
+              size={18}
+              color="white"
+            />
+            <Text style={styles.soundText} numberOfLines={1}>
+              {remixLabel(remix)}
+            </Text>
+            <MaterialCommunityIcons name="close" size={18} color="white" />
+          </Pressable>
+        </View>
+      )}
       <SoundPicker
         visible={pickerOpen}
         onClose={() => setPickerOpen(false)}
@@ -224,6 +243,12 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   primaryText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+    remixWrap: {
+    position: 'absolute',
+    left: 40,
+    right: 40,
+    alignItems: 'center',
+  },
   soundWrap: {
     position: 'absolute',
     left: 70,
