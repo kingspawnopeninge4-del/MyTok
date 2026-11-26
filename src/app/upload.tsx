@@ -30,7 +30,7 @@ export default function UploadScreen() {
   const [idle, setIdle] = useState(true);
   const [sound, setSound] = useState<SoundChoice | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-    const remix = useRemix();
+  const remix = useRemix();
   const touch = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -42,8 +42,31 @@ export default function UploadScreen() {
     };
   }, [navigation]);
 
+  // Apply the remixed sound when one arrives
+  useEffect(() => {
+    if (!remix) {
+      return;
+    }
+    setMode('mytok');
+    setIdle(true);
+    // Adjust this object if your SoundChoice type has other fields
+    setSound({
+      title: remix.sound.title,
+      url: remix.sound.url,
+      start: remix.sound.start,
+      length: remix.sound.length,
+    } as unknown as SoundChoice);
+  }, [remix]);
+
   const close = () => {
     router.navigate('/');
+  };
+
+  const clearSound = () => {
+    setSound(null);
+    if (remix) {
+      setRemix(null);
+    }
   };
 
   const changeMode = (next: Mode) => {
@@ -140,10 +163,29 @@ export default function UploadScreen() {
               {sound ? sound.title : 'Add sound'}
             </Text>
             {sound && (
-              <Pressable onPress={() => setSound(null)} hitSlop={10}>
+              <Pressable onPress={clearSound} hitSlop={10}>
                 <MaterialCommunityIcons name="close" size={18} color="white" />
               </Pressable>
             )}
+          </Pressable>
+        </View>
+      )}
+
+      {mode === 'mytok' && idle && remix && (
+        <View
+          pointerEvents="box-none"
+          style={[styles.remixWrap, { top: insets.top + 66 }]}
+        >
+          <Pressable style={styles.soundPill} onPress={clearSound}>
+            <MaterialCommunityIcons
+              name="layers-outline"
+              size={18}
+              color="white"
+            />
+            <Text style={styles.soundText} numberOfLines={1}>
+              {remixLabel(remix)}
+            </Text>
+            <MaterialCommunityIcons name="close" size={18} color="white" />
           </Pressable>
         </View>
       )}
@@ -173,24 +215,7 @@ export default function UploadScreen() {
           </View>
         </View>
       )}
-      {mode === 'mytok' && idle && remix && (
-        <View
-          pointerEvents="box-none"
-          style={[styles.remixWrap, { top: insets.top + 66 }]}
-        >
-          <Pressable style={styles.soundPill} onPress={() => setRemix(null)}>
-            <MaterialCommunityIcons
-              name="layers-outline"
-              size={18}
-              color="white"
-            />
-            <Text style={styles.soundText} numberOfLines={1}>
-              {remixLabel(remix)}
-            </Text>
-            <MaterialCommunityIcons name="close" size={18} color="white" />
-          </Pressable>
-        </View>
-      )}
+
       <SoundPicker
         visible={pickerOpen}
         onClose={() => setPickerOpen(false)}
@@ -243,7 +268,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   primaryText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-    remixWrap: {
+  remixWrap: {
     position: 'absolute',
     left: 40,
     right: 40,

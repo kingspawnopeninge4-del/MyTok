@@ -8,11 +8,9 @@ export type RemixSound = {
 };
 
 export type Remix = {
-  kind: 'sound' | 'green';
   videoId: string;
-  videoUrl: string;
   username: string;
-  sound: RemixSound | null;
+  sound: RemixSound;
 };
 
 let current: Remix | null = null;
@@ -39,7 +37,5 @@ export function useRemix(): Remix | null {
 }
 
 export function remixLabel(r: Remix): string {
-  return r.kind === 'green'
-    ? `Green screen from @${r.username}`
-    : `Sound from @${r.username}`;
+  return `Sound from @${r.username}`;
 }
