@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { ComponentProps, useEffect, useRef, useState } from 'react';
 import {
@@ -8,7 +9,6 @@ import {
   Image,
   KeyboardAvoidingView,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Switch,
@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/lib/auth';
 import { formatCount } from '@/lib/format';
+import { setRemix } from '@/lib/remix';
 import { supabase } from '@/lib/supabase';
 import { useSoundSync } from '@/lib/use-sound-sync';
 
@@ -129,12 +130,17 @@ export default function VideoViewer({
   video,
   owner,
   onClose,
+  isActive = true,
+  feed = false,
 }: {
   video: ViewerVideo;
   owner: ViewerOwner;
-  onClose: () => void;
+  onClose?: () => void;
+  isActive?: boolean;
+  feed?: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { height } = useWindowDimensions();
   const { session } = useAuth();
   const me = session ? session.user.id : null;
@@ -142,7 +148,9 @@ export default function VideoViewer({
 
   const player = useVideoPlayer(video.url, (p) => {
     p.loop = true;
-    p.play();
+    if (isActive) {
+      p.play();
+    }
   });
 
   const [views, setViews] = useState(video.views);
@@ -150,6 +158,8 @@ export default function VideoViewer({
   const [reaction, setReaction] = useState<Reaction>(null);
   const [commentCount, setCommentCount] = useState(0);
   const [shares, setShares] = useState(video.shares);
+  const [reposts, setReposts] = useState(0);
+  const [reposted, setReposted] = useState(false);
   const [saved, setSaved] = useState(false);
   const [following, setFollowing] = useState(false);
 
@@ -159,8 +169,19 @@ export default function VideoViewer({
   const [speed, setSpeed] = useState(1);
   const [loop, setLoop] = useState(true);
   const [muted, setMuted] = useState(false);
-  useSoundSync(video.sound, player, paused, muted);
   const [panel, setPanel] = useState<Panel>('none');
+
+  useSoundSync(video.sound, player, paused || !isActive, muted);
+
+  useEffect(() => {
+    if (isActive) {
+      player.play();
+      setPaused(false);
+    } else {
+      player.pause();
+      player.currentTime = 0;
+    }
+  }, [isActive, player]);
 
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [draft, setDraft] = useState('');
@@ -168,6 +189,7 @@ export default function VideoViewer({
 
   const popOpacity = useRef(new Animated.Value(0)).current;
   const popScale = useRef(new Animated.Value(0.3)).current;
+  const counted = useRef(false);
   const lastTap = useRef(0);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -175,7 +197,7 @@ export default function VideoViewer({
     player.loop = loop;
   }, [loop, player]);
 
-   const originalMuted = muted || video.keep_original === false;
+  const originalMuted = muted || video.keep_original === false;
   useEffect(() => {
     player.muted = originalMuted;
   }, [originalMuted, player]);
@@ -223,11 +245,14 @@ export default function VideoViewer({
         // the view just isn't counted
       }
     }
-    countView();
+    if (isActive && !counted.current) {
+      counted.current = true;
+      countView();
+    }
     return () => {
       cancelled = true;
     };
-  }, [video.id]);
+  }, [video.id, isActive]);
 
   // Load the real numbers for this video
   useEffect(() => {
@@ -243,11 +268,16 @@ export default function VideoViewer({
           .from('video_comments')
           .select('*', { count: 'exact', head: true })
           .eq('video_id', video.id);
+        const rp = await supabase
+          .from('video_reposts')
+          .select('*', { count: 'exact', head: true })
+          .eq('video_id', video.id);
         if (cancelled) {
           return;
         }
         setLikes(l.count ?? 0);
         setCommentCount(c.count ?? 0);
+        setReposts(rp.count ?? 0);
 
         if (me) {
           const r = await supabase
@@ -262,11 +292,18 @@ export default function VideoViewer({
             .eq('video_id', video.id)
             .eq('user_id', me)
             .maybeSingle();
+          const mine = await supabase
+            .from('video_reposts')
+            .select('video_id')
+            .eq('video_id', video.id)
+            .eq('user_id', me)
+            .maybeSingle();
           if (cancelled) {
             return;
           }
           setReaction(r.data ? (r.data.kind as Reaction) : null);
           setSaved(sv.data !== null);
+          setReposted(mine.data !== null);
 
           if (owner.id !== me) {
             const f = await supabase
@@ -373,6 +410,32 @@ export default function VideoViewer({
     }
   };
 
+  const toggleRepost = async () => {
+    if (needLogin() || !me) {
+      return;
+    }
+    const next = !reposted;
+    setReposted(next);
+    setReposts((n) => n + (next ? 1 : -1));
+    try {
+      const res = next
+        ? await supabase
+            .from('video_reposts')
+            .insert({ video_id: video.id, user_id: me })
+        : await supabase
+            .from('video_reposts')
+            .delete()
+            .eq('video_id', video.id)
+            .eq('user_id', me);
+      if (res.error) {
+        throw res.error;
+      }
+    } catch {
+      setReposted(!next);
+      setReposts((n) => n + (next ? -1 : 1));
+    }
+  };
+
   const toggleFollow = async () => {
     if (needLogin() || !me || isOwner) {
       return;
@@ -395,6 +458,24 @@ export default function VideoViewer({
     } catch {
       setFollowing(!next);
     }
+  };
+
+  const remixSound = () => {
+    setPanel('none');
+    if (needLogin()) {
+      return;
+    }
+    if (!video.sound) {
+      Alert.alert('No sound', 'This video has no sound you can use.');
+      return;
+    }
+    setRemix({
+      videoId: video.id,
+      username: owner.username,
+      sound: video.sound,
+    });
+    player.pause();
+    router.navigate('/upload');
   };
 
   const doShare = async () => {
@@ -582,14 +663,13 @@ export default function VideoViewer({
       )}
 
       <Pressable
-        style={[styles.backBtn, { top: insets.top + 10 }]}
+        style={[styles.backBtn, { top: insets.top + 10 }, feed && styles.hidden]}
         onPress={onClose}
         hitSlop={10}
       >
         <MaterialCommunityIcons name="arrow-left" size={26} color="white" />
       </Pressable>
 
-      {/* Info, bottom left */}
       <View
         pointerEvents="none"
         style={[styles.info, { paddingBottom: insets.bottom + 24 }]}
@@ -600,7 +680,7 @@ export default function VideoViewer({
           <Text style={styles.viewsText}>{formatCount(views)} views</Text>
         </View>
         {heading !== '' && <Text style={styles.title}>{heading}</Text>}
-                {video.sound && (
+        {video.sound && (
           <Text style={styles.soundLine} numberOfLines={1}>
             ♫ {video.sound.title}
           </Text>
@@ -617,7 +697,6 @@ export default function VideoViewer({
         )}
       </View>
 
-      {/* Side panel */}
       <View
         pointerEvents="box-none"
         style={[styles.actions, { bottom: insets.bottom + 20 }]}
@@ -660,6 +739,17 @@ export default function VideoViewer({
           </Text>
         </Pressable>
 
+        <Pressable style={styles.actionBtn} onPress={toggleRepost}>
+          <MaterialCommunityIcons
+            name="repeat-variant"
+            size={32}
+            color={reposted ? '#00d68f' : 'white'}
+          />
+          <Text style={styles.actionLabel}>
+            {reposts > 0 ? formatCount(reposts) : 'Repost'}
+          </Text>
+        </Pressable>
+
         <Pressable style={styles.actionBtn} onPress={doShare}>
           <MaterialCommunityIcons name="share-outline" size={30} color="white" />
           <Text style={styles.actionLabel}>
@@ -681,7 +771,6 @@ export default function VideoViewer({
         <View style={{ flex: 1 - progress }} />
       </View>
 
-      {/* Comments sheet */}
       {panel === 'comments' && (
         <KeyboardAvoidingView style={styles.overlay} behavior="padding">
           <Pressable style={styles.backdrop} onPress={() => setPanel('none')} />
@@ -743,7 +832,6 @@ export default function VideoViewer({
         </KeyboardAvoidingView>
       )}
 
-      {/* Options menu */}
       {(panel === 'menu' || panel === 'speed') && (
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={() => setPanel('none')} />
@@ -777,6 +865,11 @@ export default function VideoViewer({
                       <Switch value={muted} />
                     </View>
                   }
+                />
+                <MenuRow
+                  icon="music-note"
+                  label="Use this sound"
+                  onPress={remixSound}
                 />
                 <MenuRow
                   icon={saved ? 'bookmark' : 'bookmark-outline'}
@@ -830,18 +923,17 @@ export default function VideoViewer({
   );
 }
 
+const shadow = {
+  textShadowColor: 'rgba(0,0,0,0.6)',
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 4,
+} as const;
+
 const styles = StyleSheet.create({
-    soundLine: {
-    color: 'white',
-    fontSize: 14,
-    marginTop: 4,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
+  hidden: { display: 'none' },
   root: { flex: 1, backgroundColor: 'black' },
   centerWrap: {
-    ...StyleSheet.absoluteFill,
+   ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -853,12 +945,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fastWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
+  fastWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   fastBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -892,9 +979,7 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: 'bold',
     marginBottom: 6,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    ...shadow,
   },
   viewsRow: {
     flexDirection: 'row',
@@ -902,40 +987,23 @@ const styles = StyleSheet.create({
     gap: 4,
     marginBottom: 6,
   },
-  viewsText: {
-    color: 'white',
-    fontSize: 13,
-    fontWeight: '600',
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
+  viewsText: { color: 'white', fontSize: 13, fontWeight: '600', ...shadow },
   title: {
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 4,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    ...shadow,
   },
+  soundLine: { color: 'white', fontSize: 14, marginTop: 4, ...shadow },
   desc: {
     color: 'white',
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 4,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    ...shadow,
   },
-  tags: {
-    color: '#8ecbff',
-    fontSize: 14,
-    fontWeight: '600',
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
+  tags: { color: '#8ecbff', fontSize: 14, fontWeight: '600', ...shadow },
   actions: {
     position: 'absolute',
     right: 0,
@@ -986,10 +1054,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: 'rgba(255,255,255,0.25)',
   },
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    justifyContent: 'flex-end',
-  },
+ overlay: { ...StyleSheet.absoluteFill, justifyContent: 'flex-end' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
     backgroundColor: '#1c1c1e',
@@ -1047,7 +1112,8 @@ const styles = StyleSheet.create({
   menuRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    minHeight: 54,
+    paddingVertical: 8,
     paddingHorizontal: 20,
     gap: 16,
   },
@@ -1056,7 +1122,7 @@ const styles = StyleSheet.create({
   menuBack: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    minHeight: 54,
     paddingHorizontal: 20,
     gap: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,

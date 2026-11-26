@@ -1,12 +1,25 @@
 import { useSyncExternalStore } from 'react';
 
-export type Remix = { kind: 'green' | 'sound'; from: string };
+export type RemixSound = {
+  title: string;
+  url: string;
+  start: number;
+  length: number;
+};
+
+export type Remix = {
+  kind: 'sound' | 'green';
+  videoId: string;
+  videoUrl: string;
+  username: string;
+  sound: RemixSound | null;
+};
 
 let current: Remix | null = null;
 const listeners = new Set<() => void>();
 
-export function setRemix(r: Remix | null) {
-  current = r;
+export function setRemix(next: Remix | null) {
+  current = next;
   listeners.forEach((l) => l());
 }
 
@@ -21,10 +34,12 @@ function subscribe(l: () => void) {
   };
 }
 
-export function remixLabel(r: Remix): string {
-  return (r.kind === 'green' ? 'Green screen from @' : 'Sound from @') + r.from;
-}
-
 export function useRemix(): Remix | null {
   return useSyncExternalStore(subscribe, getRemix, getRemix);
+}
+
+export function remixLabel(r: Remix): string {
+  return r.kind === 'green'
+    ? `Green screen from @${r.username}`
+    : `Sound from @${r.username}`;
 }
